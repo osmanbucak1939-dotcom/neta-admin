@@ -7913,6 +7913,11 @@ function pcSetPrice() {
     if(typeof mwPrices!=='undefined') mwPrices[sym]={price:val,prev:prev2,chg:(val-prev2)/(prev2||1)*100};
     if(typeof updateMwRow==='function') updateMwRow(sym,val,prev2);
     fbSavePrices(sym,val);
+    // ⚠️ KRİTİK: fbSavePrices SADECE broker/prices'a yazar — override listesini
+    // besleyen adListenOverrides() ise broker/overrides'ı dinler. Bu çağrı
+    // eksikti, bu yüzden override fiyatı uygulanıyordu ama liste her snapshot'ta
+    // sıfırlanıp boş görünüyordu. fbSaveOverrides zaten doğru yere yazıyordu.
+    if(typeof fbSaveOverrides==='function') fbSaveOverrides(sym, val);
     showAdminToast && showAdminToast('Fiyat Ayarlandı ✓', sym+' → '+val, 'success');
   }
   inp.value='';
@@ -7950,6 +7955,8 @@ function pcApplyPrice(sym, price) {
   if(typeof pcRenderOverrides === 'function') pcRenderOverrides();
   if(typeof pcRefresh === 'function') pcRefresh();
   fbSavePrices(sym, price);
+  // ⚠️ pcSetPrice()'la aynı eksiklik — override listesi broker/overrides'tan besleniyor.
+  if(typeof fbSaveOverrides==='function') fbSaveOverrides(sym, price);
   // Sentetik semboller — priceSource bu sembol olan tüm sembolleri güncelle
   var _syms2 = (typeof symConfig !== 'undefined' && symConfig) ? symConfig : [];
   _syms2.forEach(function(s) {
