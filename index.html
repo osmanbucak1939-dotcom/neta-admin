@@ -10739,21 +10739,27 @@ function adOpenTrade(btn){
   var _swapSg = (typeof tradingGroups!=='undefined'&&tradingGroups)?tradingGroups.find(function(g){return g.id===(a.spreadGroup||'standard');}):null;
   var _swBuy  = (_swapSg&&_swapSg.swaps&&_swapSg.swaps[sym]!==undefined)?_swapSg.swaps[sym].buy  :(_swapSc?(_swapSc.swapBuy||0):0);
   var _swSell = (_swapSg&&_swapSg.swaps&&_swapSg.swaps[sym]!==undefined)?_swapSg.swaps[sym].sell :(_swapSc?(_swapSc.swapSell||0):0);
-  _adPositions.push({
+  var _newPos = {
     id:Date.now(), sym:sym, label:label, side:side, qty:qty,
     contractSize:cs, openPrice:price, sl:sl, tp:tp,
     time:new Date().toISOString(), openDate:new Date().toISOString(),
     cost:cost, swapTotal:0, swapBuy:_swBuy, swapSell:_swSell
-  });
+  };
+  _adPositions.push(_newPos);
   // ⚠️ a.positions'a DOKUNMA — users/{id} canonical
   if(typeof _allAccountPositions!=='undefined') _allAccountPositions[a.id]=_adPositions;
-  // Sadece users/{id}'ye yaz — MT4/5 model: balance açılışta DEĞİŞMEZ, yazılmıyor.
+  // ⚠️ KRİTİK: Genel blind write yerine, SADECE bu yeni pozisyonu sunucudaki en
+  // güncel listeye ekleyen transaction — Cloud Function risk motorunun (varsa)
+  // az önce kapattığı bir pozisyonu dirilltmesin (bkz. trader placeOrder'daki aynı düzeltme).
   if(typeof db !== 'undefined' && db) {
-    db.collection('users').doc(String(a.id)).set({
-      positions: _adPositions,
-      _balanceSource: 'manager',
-      updatedAt: new Date().toISOString()
-    }, {merge:true}).catch(function(e){ console.warn('adOpenTrade:', e); });
+    var _refAOT = db.collection('users').doc(String(a.id));
+    db.runTransaction(function(tx){
+      return tx.get(_refAOT).then(function(doc){
+        var serverPos = (doc.exists && Array.isArray(doc.data().positions)) ? doc.data().positions.slice() : [];
+        serverPos.push(_newPos);
+        tx.set(_refAOT, { positions: serverPos, _balanceSource: 'manager', updatedAt: new Date().toISOString() }, { merge: true });
+      });
+    }).catch(function(e){ console.warn('adOpenTrade transaction:', e.message); });
   }
   adRenderOpenTable();
   adRefreshBadges();
