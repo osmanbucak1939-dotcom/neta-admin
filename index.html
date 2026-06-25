@@ -5925,6 +5925,17 @@ function renderAccTable(){
   if(!container)return;
   if(typeof accounts==='undefined'||!Array.isArray(accounts)) return;
 
+  // ⚠️ ODAK KORUMA: Bu fonksiyon arama/filtre kutularını da innerHTML ile yeniden
+  // oluşturuyor — bu, her tuş vuruşunda eski input'u yok edip yenisini yaratıyor,
+  // bu da fokusu (ve imleç konumunu) kaybettiriyor. Yeniden çizmeden ÖNCE hangi
+  // elementin odakta olduğunu ve imleç konumunu yakalıyoruz, çizimden SONRA geri yüklüyoruz.
+  var _focusId = (document.activeElement && document.activeElement.id) || null;
+  var _focusSelStart = null, _focusSelEnd = null;
+  if(_focusId && document.activeElement && typeof document.activeElement.selectionStart === 'number') {
+    _focusSelStart = document.activeElement.selectionStart;
+    _focusSelEnd = document.activeElement.selectionEnd;
+  }
+
   var all=accounts.filter(function(a){
     if(a.role && a.role!=='customer') return false;
     // Superadmin/admin tüm hesapları görür
@@ -6135,6 +6146,20 @@ function renderAccTable(){
 
   container.style.cssText='flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;';
   container.innerHTML='<div style="display:flex;flex-direction:column;flex:1;min-height:0;overflow:hidden;">'+bar+headerDiv+bodyDiv+'</div>';
+
+  // Odağı (ve mümkünse imleç konumunu) geri yükle — yeniden çizimden hemen sonra,
+  // aynı id'li yeni element üzerinde. requestAnimationFrame, DOM'un yerleşmesini garanti eder.
+  if(_focusId) {
+    requestAnimationFrame(function(){
+      var _el = document.getElementById(_focusId);
+      if(_el && typeof _el.focus === 'function') {
+        _el.focus();
+        if(_focusSelStart !== null && typeof _el.setSelectionRange === 'function') {
+          try { _el.setSelectionRange(_focusSelStart, _focusSelEnd); } catch(e){}
+        }
+      }
+    });
+  }
 
   // Yatay scroll senkronizasyonu + kolon genişliği eşitleme
   setTimeout(function(){
@@ -9055,7 +9080,16 @@ function updateMarginCallPanel() {
 }
 
 // 1 saniyede bir margin call güncelle (arka plandayken atla)
-setInterval(function(){ if(!document.hidden) updateMarginCallPanel(); }, 1000);
+setInterval(function(){
+  if(document.hidden) return;
+  // ⚠️ Yönetim paneli (mgrOverlay — Trading Groups, Hesap ayarları vb.) açıkken bu
+  // ağır, tüm-hesapları-tarayan hesaplamayı atla. Aksi halde her saniye ana iş
+  // parçacığını kısa süreli kilitleyip, o panellerdeki dropdown/tıklama gibi
+  // etkileşimlerde aralıklı/öngörülemez gecikmelere yol açıyordu.
+  var _mgr = document.getElementById('mgrOverlay');
+  if(_mgr && _mgr.classList.contains('open')) return;
+  updateMarginCallPanel();
+}, 1000);
 // ─────────────────────────────────────────────────
 
 function loadAllPositionsAndUpdate() {
