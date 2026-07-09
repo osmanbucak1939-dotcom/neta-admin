@@ -363,6 +363,11 @@ body { background:var(--bg); color:var(--text); font-family:var(--sans); font-si
 .mgr-input { background:var(--bg); border:1px solid var(--border2); border-radius:2px; padding:5px 8px; color:var(--text); font-family:var(--mono); font-size:12px; outline:none; transition:border-color .15s; width:100%; }
 .mgr-input:focus { border-color:var(--accent); }
 .mgr-select { background:var(--bg); border:1px solid var(--border2); border-radius:2px; padding:5px 8px; color:var(--text); font-family:var(--mono); font-size:12px; outline:none; width:100%; cursor:pointer; }
+/* ⚠️ Dropdown açılır listesi (option'lar) — arka plan verilmezse bazı tarayıcılarda
+   saydam/boş görünüyordu (arkadaki alanlar görünüyordu). Açıkça koyu arka plan ver. */
+.mgr-input option, .mgr-select option, select.mgr-input option, select option {
+  background:#1a1a1a; color:#e0e0e0;
+}
 
 .mgr-row { display:grid; gap:12px; margin-bottom:14px; }
 .mgr-row.cols2 { grid-template-columns:1fr 1fr; }
@@ -1973,6 +1978,8 @@ console.log('Firebase bağlandı ✓');
               <option value="200">1:200</option>
               <option value="500">1:500</option>
               <option value="1000">1:1000</option>
+              <option value="2000">1:2000</option>
+              <option value="5000">1:5000</option>
             </select>
           </div>
           <div>
@@ -1983,6 +1990,8 @@ console.log('Firebase bağlandı ✓');
               <option value="200">1:200</option>
               <option value="500">1:500</option>
               <option value="1000">1:1000</option>
+              <option value="2000">1:2000</option>
+              <option value="5000">1:5000</option>
             </select>
           </div>
           <div>
@@ -4446,6 +4455,8 @@ var MARKET_GROUPS = [
       {sym:'AKFYE', name:'AKFYE', full:'Akfen Yenilenebilir Enerji', icon:'🇹🇷', spread:0.05, decimals:2},
       {sym:'MIAKT', name:'MIAKT', full:'Mia Teknoloji', icon:'🇹🇷', spread:0.05, decimals:2},
       {sym:'SARKY', name:'SARKY', full:'Sarkuysan', icon:'🇹🇷', spread:0.05, decimals:2},
+      {sym:'TDGYO', name:'TDGYO', full:'Trend GYO', icon:'🇹🇷', spread:0.05, decimals:2},
+      {sym:'TTRAK', name:'TTRAK', full:'Türk Traktör', icon:'🇹🇷', spread:0.05, decimals:2},
       {sym:'AGHOL', name:'AGHOL', full:'Anadolu Grubu Holding', icon:'🇹🇷', spread:0.05, decimals:2},
       {sym:'AGROT', name:'AGROT', full:'Agrotech Teknoloji', icon:'🇹🇷', spread:0.05, decimals:2},
       {sym:'AHGAZ', name:'AHGAZ', full:'Ahlatcı Doğalgaz', icon:'🇹🇷', spread:0.05, decimals:2},
@@ -5393,7 +5404,7 @@ function adRenderTab(tab) {
             '</div>' +
             '<div><label class="ad-label">Kaldıraç</label>' +
               '<select class="ad-input" id="ad_lev" style="cursor:pointer;">' +
-                '<option value="50">1:50</option><option value="100">1:100</option><option value="200">1:200</option><option value="500">1:500</option><option value="1000">1:1000</option>' +
+                '<option value="50">1:50</option><option value="100">1:100</option><option value="200">1:200</option><option value="500">1:500</option><option value="1000">1:1000</option><option value="2000">1:2000</option><option value="5000">1:5000</option>' +
               '</select>' +
             '</div>' +
             '<div><label class="ad-label">Marjin Seviyesi (%)</label><input class="ad-input" id="ad_ml" type="number" placeholder="100" min="0" value="'+(a.marginLevelPct||100)+'"></div>' +
@@ -6841,9 +6852,13 @@ function updateMwRow(sym, price, prev) {
   const up = price >= prev;
   row.querySelector('.mw-bid').textContent = bid.toFixed(it.decimals);
   row.querySelector('.mw-ask').textContent = ask.toFixed(it.decimals);
-  row.classList.remove('mw-flash-g','mw-flash-r');
-  void row.offsetWidth; // reflow
-  row.classList.add(up ? 'mw-flash-g' : 'mw-flash-r');
+  // ⚠️ PERFORMANS: Flash animasyonu + `void row.offsetWidth` (zorla senkron reflow)
+  // KALDIRILDI. 179 sembol × saniyede ~24 tick × her birinde zorla reflow = tarayıcı
+  // sürekli tüm sayfa düzenini yeniden hesaplıyordu (profilde 4.5sn "Oluşturma").
+  // Bu, "Sembol Ekle" dropdown'ının açılamamasının/kasmanın asıl sebebiydi.
+  // Fiyat yönü rengi (bid hücresinin metin rengi) hâlâ korunuyor:
+  var _bidCell = row.querySelector('.mw-bid');
+  if(_bidCell) _bidCell.style.color = up ? 'var(--buy)' : 'var(--sell)';
 }
 
 function renderMarketWatch(filter) {
@@ -7074,7 +7089,7 @@ if (!symConfig) {
   (function(){
     var _bist = ['AEFES','AKBNK','ASELS','BIMAS','EKGYO','ENKAI','EREGL','FROTO','GARAN','GUBRF',
                  'ISCTR','KCHOL','KOZAL','KRDMD','MGROS','PETKM','SAHOL','SASA','SISE','TAVHL',
-                 'TCELL','THYAO','TOASO','TTKOM','TUPRS','VAKBN','YKBNK','PGSUS','ASTOR','DSTKF','MPARK','GWIND','HTTBT','LOGO','PASEU','MAGEN','KUYAS','AKFYE','MIAKT','SARKY'];
+                 'TCELL','THYAO','TOASO','TTKOM','TUPRS','VAKBN','YKBNK','PGSUS','ASTOR','DSTKF','MPARK','GWIND','HTTBT','LOGO','PASEU','MAGEN','KUYAS','AKFYE','MIAKT','SARKY','TDGYO','TTRAK'];
     var _fixed = 0;
     symConfig.forEach(function(s){
       if(s && _bist.indexOf(s.sym)!==-1 && s.category!=='bist'){ s.category='bist'; _fixed++; }
