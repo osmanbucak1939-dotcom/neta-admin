@@ -2203,7 +2203,7 @@ console.log('Firebase bağlandı ✓');
             <div><label style="font-size:10px;color:#a0a0a0;display:block;margin-bottom:3px;">ETİKET *</label><input class="mgr-input" id="ns_label" placeholder="Bitcoin" style="width:100%;"></div>
             <div><label style="font-size:10px;color:#a0a0a0;display:block;margin-bottom:3px;">KISA AD *</label><input class="mgr-input" id="ns_short" placeholder="BTC" style="width:100%;"></div>
             <div><label style="font-size:10px;color:#a0a0a0;display:block;margin-bottom:3px;">KATEGORİ</label>
-              <select class="mgr-input" id="ns_category" style="width:100%;">
+              <select class="mgr-input" id="ns_category" style="width:100%;" onchange="_adSuggestContractSize(this.value)">
                 <option value="crypto">Kripto</option>
                 <option value="forex">Forex</option>
                 <option value="commodity">Emtia</option>
@@ -4818,7 +4818,10 @@ function txImportMarketGroups(){
         color: it.color || '#f0b90b',
         minLot: 0.01,
         active:true,
-        contractSize: (cat==='forex') ? 100000 : 1,
+        // ⚠️ 2026-07-24 DÜZELTME (kritik): BIST/hisse sembolleri forex-dışı
+        // genel varsayılana (1) düşüyordu — bu, K/Z hesabını 1000 kat küçük
+        // gösteriyordu.
+        contractSize: (cat==='forex') ? 100000 : ((cat==='bist'||cat==='stock') ? 1000 : 1),
         margin: (cat==='forex') ? 2 : 1,
         decimals: parseInt(it.decimals)||2,
         category: cat,
@@ -4907,6 +4910,14 @@ function deleteSymMgr(i) {
   renderSymMgr();
   if(typeof applySymConfig==='function'){ try{ applySymConfig(); }catch(e){} }
   showAdminToast('Silindi', sym + ' sembolü silindi', 'danger');
+}
+function _adSuggestContractSize(cat) {
+  var csEl = document.getElementById('ns_contractSize');
+  var mgEl = document.getElementById('ns_margin');
+  if(!csEl) return;
+  var suggestions = { forex:100000, commodity:100, index:1, stock:1000, bist:1000, crypto:1 };
+  if(suggestions.hasOwnProperty(cat)) csEl.value = suggestions[cat];
+  if(mgEl) mgEl.value = (cat==='forex') ? 2 : 1;
 }
 function saveSymbolMgr() {
   var editIdx      = parseInt(document.getElementById('ns_editIdx').value);
@@ -5820,7 +5831,7 @@ function adOpenFinlogForm(type, editIdx) {
     '<div style="font-size:11px;color:var(--accent);font-family:var(--mono);margin-bottom:10px;font-weight:700;">'+(isEdit?'&#9998; DÜZENLE: ':'')+label.toUpperCase()+'</div>'
     + '<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:8px;margin-bottom:10px;">'
     + '<div><label class="ad-label">MİKTAR ($)</label><input class="ad-input" id="afl_amt" type="number" min="0" step="any" value="'+(log?log.amount:'')+'"></div>'
-    + '<div><label class="ad-label">TARİH &amp; SAAT</label><input class="ad-input" id="afl_date" type="datetime-local" value="'+(log?new Date(log.date).toISOString().slice(0,16):nowDt)+'"></div>'
+    + '<div><label class="ad-label">TARİH &amp; SAAT</label><input class="ad-input" id="afl_date" type="datetime-local" value="'+(log?_adToLocalDT(log.date):nowDt)+'"></div>'
     + '<div><label class="ad-label">AÇIKLAMA</label><input class="ad-input" id="afl_note" type="text" placeholder="—" value="'+(log?log.note||'':'')+'"></div>'
     + '</div>'
     + '<input type="hidden" id="afl_type" value="'+type+'">'
@@ -10818,17 +10829,31 @@ function adRenderHistoryTable(){
 // ── QUOTE → USD DÖNÜŞÜMÜ (admin) ────────────────────────────────────────────
 // ⚠️ _adQuoteToUsd() bu listeye DOĞRUDAN bakar — symConfig kaydına bağımlı değil.
 // Trader'daki TX_BIST_SYMS ile birebir aynı tutulmalı.
-var TX_ALL_BIST_SYMS = ['AEFES','AKBNK','ASELS','BIMAS','EKGYO','ENKAI','EREGL','FROTO','GARAN','GUBRF',
-  'ISCTR','KCHOL','KOZAL','KRDMD','MGROS','PETKM','SAHOL','SASA','SISE','TAVHL',
-  'TCELL','THYAO','TOASO','TTKOM','TUPRS','VAKBN','YKBNK','PGSUS','ASTOR','DSTKF',
-  'AGHOL','AGROT','AHGAZ','AKCNS','AKSA','AKSEN','ALARK','ALFAS','ALTNY','ANSGR','ARCLK','ARDYZ','AYDEM','BERA','BRSAN','BRYAT','BSOKE','BTCIM','CANTE','CCOLA','CIMSA','CVKMD','CWENE','DOAS','DOHOL','ECILC','EFOR','ENERY','ENJSA','EUPWR','FENER','GENIL','GESAN','HALKB','HEKTS','HROZM','ISGYO','ISMEN','KAYSE','KCAER','KLYN','KOND','KONTR','KOZAA','LMKDC','MAVI','MIATK','MOGAN','OBAMS','ODAS','OTKAR','OYAKC','PEKGY','QUAGR','RALYH','REEDR','SAYAS','SDTTR','SKBNK','SOKM','TABGD','TARKM','TEKFA','TKFEN','TMSN','TRENJ','TSKB','TUKAS','TURSG','ULKER','VESBE','VESTL','YEOTK','ZOREN','MPARK','GWIND','HTTBT','LOGO','PASEU','MAGEN','KUYAS','AKFYE','MIAKT','SARKY'];
+var TX_ALL_BIST_SYMS = [
+// ⚠️ 2026-08-06: TDGYO + TTRAK eksikti, trader listesiyle eşitlendi (116).
+  'AEFES','AGHOL','AGROT','AHGAZ','AKBNK','AKCNS','AKFYE','AKSA','AKSEN','ALARK',
+  'ALFAS','ALTNY','ANSGR','ARCLK','ARDYZ','ASELS','ASTOR','AYDEM','BERA','BIMAS',
+  'BRSAN','BRYAT','BSOKE','BTCIM','CANTE','CCOLA','CIMSA','CVKMD','CWENE','DOAS',
+  'DOHOL','DSTKF','ECILC','EFOR','EKGYO','ENERY','ENJSA','ENKAI','EREGL','EUPWR',
+  'FENER','FROTO','GARAN','GENIL','GESAN','GUBRF','GWIND','HALKB','HEKTS','HROZM',
+  'HTTBT','ISCTR','ISGYO','ISMEN','KAYSE','KCAER','KCHOL','KLYN','KOND','KONTR',
+  'KOZAA','KOZAL','KRDMD','KUYAS','LMKDC','LOGO','MAGEN','MAVI','MGROS','MIAKT',
+  'MIATK','MOGAN','MPARK','OBAMS','ODAS','OTKAR','OYAKC','PASEU','PEKGY','PETKM',
+  'PGSUS','QUAGR','RALYH','REEDR','SAHOL','SARKY','SASA','SAYAS','SDTTR','SISE',
+  'SKBNK','SOKM','TABGD','TARKM','TAVHL','TCELL','TDGYO','TEKFA','THYAO','TKFEN',
+  'TMSN','TOASO','TRENJ','TSKB','TTKOM','TTRAK','TUKAS','TUPRS','TURSG','ULKER',
+  'VAKBN','VESBE','VESTL','YEOTK','YKBNK','ZOREN'
+];
 
 function _adQuoteToUsd(sym, amount) {
   if(!sym || !amount) return amount || 0;
   sym = sym.toUpperCase();
   if(sym.endsWith('USDT') || sym.endsWith('USDC')) return amount;
   var _USD_C = ['SPX500X','NAS100X','DJ30X','USOIL','BRTUSD',
-    'XAUUSD','XAGUSD','XPTUSD','NGAS','DXY','FTSE100X','DAX40X'];
+    'XAUUSD','XAGUSD','XPTUSD','XPDUSD','NGAS','DXY','FTSE100X','DAX40X',
+    // ⚠️ 2026-08-06: XPDUSD + ABD hisseleri eksikti — symConfig'te category:'stock'
+    // oldukları için admin bunları TL bazlı sanıp K/Z'yi ~USDTRY katı KÜÇÜK gösteriyordu.
+    'AAPL','TSLA','AMZN','GOOGL','NVDA','NFLX','WMT','BA'];
   if(_USD_C.indexOf(sym) >= 0) return amount;
   var quoteCur = '';
   if(sym === 'XU100X') quoteCur = 'TRY';
@@ -10985,6 +11010,17 @@ function adCloseAllPositions(){
 }
 
 // ── Pozisyon düzenle ──────────────────────────────────────────
+// ⚠️ 2026-07-24: datetime-local inputları YEREL saat bekler, ama tarihler
+// UTC (ISO) saklanıyor — .toISOString() direkt kesilirse tarayıcı saat
+// dilimine göre kaymış görünür. Bu yardımcı, doğru yerel karşılığı üretir.
+// Bağımsız global fonksiyon — hangi modal önce açılırsa açılsın hazır olsun diye.
+function _adToLocalDT(date) {
+  if(!date) return '';
+  var d = new Date(date);
+  if(isNaN(d.getTime())) return '';
+  var tzOff = d.getTimezoneOffset()*60000;
+  return new Date(d.getTime()-tzOff).toISOString().slice(0,16);
+}
 function adEditPos(btn){
   if(typeof hasPerm==='function'&&!hasPerm('trades.edit')){showAdminToast('Yetkisiz','Pozisyon düzenleme yetkiniz yok','danger');return;}
   var id  = parseInt(btn.dataset.id||btn.getAttribute('data-id'));
@@ -11002,7 +11038,7 @@ function adEditPos(btn){
   var cs  = parseFloat(pos.contractSize)||1;
   var pnl = _adQuoteToUsd(pos.sym, (pos.side==='buy'?cur-pos.openPrice:pos.openPrice-cur)*(parseFloat(pos.qty)||0)*cs);
   var pc  = pnl>=0?'#26a69a':'#ef5350';
-  var openVal = (pos.openDate||pos.time) ? new Date(pos.openDate||pos.time).toISOString().slice(0,16) : '';
+  var openVal = _adToLocalDT(pos.openDate||pos.time);
   modal.innerHTML = '<div style="background:#181818;border:1px solid #333;border-radius:8px;padding:24px;width:420px;max-height:90vh;overflow-y:auto;">'
     +'<div style="font-family:var(--mono);font-size:12px;font-weight:700;margin-bottom:16px;color:#f0b90b;">POZİSYON DÜZENLE #'+String(id).slice(-6)+'</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
@@ -11089,7 +11125,14 @@ function adSaveEdit(){
   var dev = (document.getElementById('em_device')||{}).value;
   if(dev) pos.openDevice = dev;
   var a = accounts.find(function(x){ return String(x.id)===String(_adAccId); });
-  if(a) pos.cost = (pos.openPrice * pos.qty) / parseFloat((a&&a.leverage)||100);
+  // ⚠️ 2026-07-24 DÜZELTME (kritik): teminat (cost) hesabı KONTRAT BÜYÜKLÜĞÜNÜ
+  // atlıyordu — aynı dosyadaki adOpenTrade ise (fiyat*lot*cs)/kaldıraç kullanıyor.
+  // ASELS gibi cs=100 olan sembollerde, düzenleme sonrası teminat 100 KAT yanlış
+  // hesaplanıyor, bu da marj seviyesini ve stop-out davranışını bozuyordu.
+  if(a) {
+    var _csEdit = parseFloat(pos.contractSize)||1;
+    pos.cost = (pos.openPrice * pos.qty * _csEdit) / parseFloat((a&&a.leverage)||100);
+  }
   if(a) _adSurgicalUpdatePosition(a.id, pos.id, {
     side: pos.side, qty: pos.qty, openPrice: pos.openPrice, sl: pos.sl, tp: pos.tp,
     swapTotal: pos.swapTotal, commission: pos.commission, openDate: pos.openDate,
@@ -11230,8 +11273,8 @@ function adEditHistory(btn){
     modal.style.cssText = 'position:fixed;inset:0;z-index:60000;background:rgba(0,0,0,0.85);display:flex;align-items:center;justify-content:center;';
     document.body.appendChild(modal);
   }
-  var openVal  = (h.openDate||h.time) ? new Date(h.openDate||h.time).toISOString().slice(0,16) : '';
-  var closeVal = (h.closeDate||h.closeTime) ? new Date(h.closeDate||h.closeTime).toISOString().slice(0,16) : '';
+  var openVal  = _adToLocalDT(h.openDate||h.time);
+  var closeVal = _adToLocalDT(h.closeDate||h.closeTime);
   modal.innerHTML = '<div style="background:#181818;border:1px solid #333;border-radius:8px;padding:24px;width:420px;max-height:90vh;overflow-y:auto;">'
     +'<div style="font-family:var(--mono);font-size:12px;font-weight:700;margin-bottom:16px;color:#f0b90b;">GEÇMİŞ DÜZENLE #'+String(h.id).slice(-6)+'</div>'
     +'<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;">'
@@ -11354,7 +11397,13 @@ function adReopenHistory(btn){
   // Kapalı kaydı açık pozisyona çevir — kapanış alanlarını temizle
   var pos = Object.assign({}, h);
   ['closePrice','closeTime','closeDate','closeReason','closeDevice','pnl','status','closed','_accName','_accId'].forEach(function(k){ delete pos[k]; });
-  if(!pos.id) pos.id = Date.now();
+  // ⚠️ 2026-07-24 DÜZELTME: eskiden sadece pos.id BOŞSA yeni id atanıyordu — ama
+  // buraya kopyalanan h.id, kapanan pozisyonun AYNI id'si. Eğer trader'ın "az önce
+  // kapatıldı" koruması (60sn) hâlâ aktifse, müşterinin tarayıcısı bu YENİDEN
+  // AÇILAN pozisyonu (aynı id'yi taşıdığı için) "dirilme" sanıp gizleyebilirdi.
+  // Yeniden açma HER ZAMAN yeni bir id alır — kavramsal olarak da doğrusu bu:
+  // yeniden açılan pozisyon yeni bir örnek, eskisinin devamı değil.
+  pos.id = Date.now();
   // Render'ın beklediği alanları garanti et (eski kayıtlarda isimler farklı olabilir)
   if(!pos.openDate) pos.openDate = pos.time || pos.openTime || new Date().toISOString();
   if(!pos.qty) pos.qty = parseFloat(h.qty)||parseFloat(h.lot)||0;
