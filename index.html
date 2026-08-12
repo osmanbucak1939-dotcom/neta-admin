@@ -5292,6 +5292,10 @@ function adRenderTab(tab) {
             adIR('Kayıt Tarihi', a.regDate ? fmtDate(a.regDate) : (a.created||'—')) +
             adIR('Son Giriş', a.lastLogin ? fmtDate(a.lastLogin) : (a.lastSeen ? fmtDate(a.lastSeen) : '—')) +
             adIR('Hesap Tipi', a.type==='demo'?'Demo':'Gerçek') +
+            adIR('Temsilci', adRepCellHtml(a.id)) +
+            adIR('Bakiye', '$'+adFp(getAccBal(a.id))
+              + ' <button onclick="adAuditBalance(\''+a.id+'\')" class="ad-btn" '
+              + 'style="margin-left:8px;font-size:10px;padding:2px 8px;">Denetle</button>') +
           '</table>' +
         '</div>' +
         '<div>' +
@@ -5565,7 +5569,276 @@ function adRenderTab(tab) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════
+// BAKİYE DENETİMİ (2026-08-12)
+// ──────────────────────────────────────────────────────────────
+// "Bu hesabın bakiyesi doğru mu?" sorusunu elle toplama yapmadan yanıtlar.
+// Beklenen bakiye = yatırımlar − çekimler + kapanan işlemlerin toplam K/Z
+//                   − toplam komisyon
+// Kapanış K/Z'si swap'i zaten içerir (pos.swapTotal, pnl'e dahil ediliyor).
+// Teminat (cost) hesaba KATILMAZ: açılışta bakiyeden düşülmüyor, dolayısıyla
+// kapanışta iade de edilmiyor (bkz. trader'da "balance += pnl").
+//
+// Fark çıkması TEK BAŞINA hata demek değildir — elle yapılmış bakiye
+// düzeltmeleri, silinmiş geçmiş kayıtları veya 50/100 kayıtla sınırlı
+// tradeHistory kırpması da fark üretir. Araç farkı gösterir, yorumu
+// kullanıcıya bırakır.
+// ══════════════════════════════════════════════════════════════
+function adAuditBalance(accId){
+  var fl   = (typeof getAccFinlog==='function') ? getAccFinlog(accId) : [];
+  var bal  = (typeof getAccBal==='function')    ? getAccBal(accId)    : 0;
+  var _c   = (typeof _accCanon!=='undefined') ? _accCanon[String(accId)] : null;
+  var hist = (_c && Array.isArray(_c.tradeHistory)) ? _c.tradeHistory
+             : (Array.isArray(_adHistory) ? _adHistory : []);
+
+  var dep=0, wd=0, other=0, otherCnt=0;
+  (fl||[]).forEach(function(l){
+    var a = parseFloat(l.amount)||0;
+    if(l.type==='deposit')       dep += a;
+    else if(l.type==='withdraw') wd  += a;
+    else { other += a; otherCnt++; }
+  });
+
+  var pnl=0, comm=0, swap=0, n=0, soCost=0, soCnt=0, allCost=0, costCnt=0;
+  (hist||[]).forEach(function(h){
+    pnl  += parseFloat(h.pnl)||0;
+    comm += parseFloat(h.commission)||0;
+    swap += parseFloat(h.swapTotal)||0;
+    n++;
+    var _c = parseFloat(h.cost)||0;
+    if(_c > 0){ allCost += _c; costCnt++; }
+    if(h.closeReason==='stop_out'){ soCost += _c; soCnt++; }
+  });
+
+  var expected = dep - wd + pnl - comm;
+  var diff     = bal - expected;
+  var okTol    = Math.abs(diff) < 0.01;
+
+  var row = function(l,v,c){
+    return '<tr><td style="padding:4px 10px 4px 0;color:#a0a0a0;">'+l+'</td>'
+      + '<td style="padding:4px 0;text-align:right;font-family:var(--mono);'
+      + (c?'color:'+c+';':'') + '">'+v+'</td></tr>';
+  };
+  var money = function(x){ return (x<0?'-':'')+'$'+adFp(Math.abs(x)); };
+
+  var html = '<div style="font-size:12px;">'
+    + '<table style="width:100%;border-collapse:collapse;">'
+    + row('Yatırımlar',            money(dep),  '#26a69a')
+    + row('Çekimler',              money(-wd),  '#ef5350')
+    + row('Kapanan işlem K/Z ('+n+' işlem)', money(pnl), pnl>=0?'#26a69a':'#ef5350')
+    + row('Komisyonlar',           money(-comm),'#ef5350')
+    + (otherCnt ? row('Diğer finans kaydı ('+otherCnt+')', money(other), '#f0b90b') : '')
+    + '<tr><td colspan="2" style="border-top:1px solid #2a2a2a;padding-top:4px;"></td></tr>'
+    + row('<b>Beklenen bakiye</b>', '<b>'+money(expected)+'</b>')
+    + row('<b>Kayıtlı bakiye</b>',  '<b>'+money(bal)+'</b>')
+    + row('<b>FARK</b>', '<b>'+money(diff)+'</b>', okTol?'#26a69a':'#ef5350')
+    + '</table>';
+
+  if(okTol){
+    html += '<div style="margin-top:10px;color:#26a69a;">✓ Bakiye kayıtlarla tutarlı.</div>';
+  } else {
+    html += '<div style="margin-top:10px;color:#ef5350;line-height:1.6;">'
+      + '⚠ ' + money(Math.abs(diff)) + ' fark var (kayıtlı bakiye beklenenden '
+      + (diff>0?'FAZLA':'EKSİK') + ').</div>';
+
+    // Fazlalık teminat toplamlarına yakınsa, kapanışta teminatın bakiyeye
+    // geri eklendiği anlamına gelir. Önce TÜM kapanışlar, sonra yalnız
+    // stop-out'lar test edilir.
+    var _yakin = function(x){ return x>0 && Math.abs(diff - x) < Math.max(1, x*0.05); };
+    if(diff > 0 && (costCnt>0 || soCnt>0)){
+      html += '<div style="margin-top:8px;padding:8px 10px;background:#1d1a12;'
+        + 'border:1px solid #4a3f1a;border-radius:6px;font-size:11px;line-height:1.6;">'
+        + '<b style="color:#f0b90b;">Teminat iadesi testi</b><br>'
+        + 'Tüm kapanışların teminat toplamı ('+costCnt+' işlem): <b>'+money(allCost)+'</b><br>'
+        + (soCnt ? 'Bunun stop-out olanları ('+soCnt+' işlem): <b>'+money(soCost)+'</b><br>' : '')
+        + 'İşlem başına ortalama fazlalık: <b>'+money(n?diff/n:0)+'</b><br>'
+        + (_yakin(allCost)
+            ? '<span style="color:#ef5350;">→ Fazlalık, TÜM kapanışların teminat toplamıyla '
+              + 'örtüşüyor. Kapanışta teminat bakiyeye geri ekleniyor(du).</span>'
+            : _yakin(soCost)
+              ? '<span style="color:#ef5350;">→ Fazlalık, stop-out teminatlarıyla örtüşüyor '
+                + '(6 Ağustos 2026 öncesi risk motoru hatası).</span>'
+              : '<span style="color:#a0a0a0;">→ Fazlalık hiçbir teminat toplamıyla '
+                + 'örtüşmüyor; sebep başka.</span>')
+        + '</div>';
+    }
+
+    // Geçmiş listesi üst sınırda ise beklenen bakiye eksik hesaplanmış olabilir
+    if(n >= 50){
+      html += '<div style="margin-top:8px;padding:8px 10px;background:#12191d;'
+        + 'border:1px solid #1a3a4a;border-radius:6px;font-size:11px;line-height:1.6;color:#7ec8e3;">'
+        + '<b>Dikkat:</b> Geçmişte tam '+n+' kayıt var — bu, saklanan üst sınır. '
+        + 'Daha eski işlemler kırpılmış olabilir; o durumda "beklenen bakiye" '
+        + 'olduğundan DÜŞÜK çıkar ve farkın bir kısmı gerçek kârdır.</div>';
+    }
+
+    html += '<div style="margin-top:8px;color:#a0a0a0;font-size:11px;line-height:1.6;">'
+      + 'Diğer olası sebepler: elle yapılmış bakiye düzeltmesi, finlog\'a yazılmamış '
+      + 'bir işlem, veya geçmiş listesinin kırpılmış olması (son 50–100 kayıt tutuluyor). '
+      + 'Swap toplamı: ' + money(swap) + ' — K/Z rakamına dahildir.</div>';
+  }
+  html += '</div>';
+  _adAuditModal(html);
+}
+
+// Basit, kendi kendine yeten modal (mevcut bir showAdminModal yardımcısı yok)
+function _adAuditModal(inner){
+  var old = document.getElementById('adAuditOverlay');
+  if(old) old.remove();
+  var ov = document.createElement('div');
+  ov.id = 'adAuditOverlay';
+  ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:10001;'
+    + 'display:flex;align-items:center;justify-content:center;';
+  ov.onclick = function(e){ if(e.target===ov) ov.remove(); };
+  ov.innerHTML = '<div style="background:#181818;border:1px solid #2a2a2a;border-radius:10px;'
+    + 'padding:20px 22px;min-width:340px;max-width:460px;color:#ddd;font-family:var(--mono);">'
+    + '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">'
+    + '<span style="font-size:12px;letter-spacing:1px;color:#f0b90b;">BAKİYE DENETİMİ</span>'
+    + '<button onclick="document.getElementById(\'adAuditOverlay\').remove()" '
+    + 'style="background:none;border:none;color:#888;font-size:16px;cursor:pointer;">✕</button>'
+    + '</div>' + inner + '</div>';
+  document.body.appendChild(ov);
+}
+
 function adIR(l,v){ return '<tr><td style="padding:5px 0;color:var(--muted);width:45%;">'+l+'</td><td style="padding:5px 0;font-weight:600;">'+v+'</td></tr>'; }
+
+// ══════════════════════════════════════════════════════════════
+// TEMSİLCİ (PERSONEL) ATAMA — hesap detayı → BİLGİLER sekmesi
+// ──────────────────────────────────────────────────────────────
+// Atama zaten _staffList[].assignedAccounts dizisinde tutuluyordu; personel
+// sekmesindeki "Ata" modalı da aynı diziyi kullanıyor. Burada sadece aynı
+// veriye hesap tarafından erişim ekleniyor — İKİNCİ BİR KAYIT TUTULMUYOR,
+// yani iki ekran her zaman aynı şeyi gösterir.
+// ══════════════════════════════════════════════════════════════
+
+// Bu hesaba açıkça atanmış personelleri döndür.
+// Not: admin/superadmin rolü zaten tüm hesapları görür; buradaki liste
+// yalnızca AÇIK atamaları gösterir (personel sekmesindeki mantıkla aynı).
+function adGetAccStaff(accId){
+  if(typeof _staffList==='undefined' || !Array.isArray(_staffList)) return [];
+  var id = String(accId);
+  return _staffList.filter(function(s){
+    return Array.isArray(s.assignedAccounts) &&
+           s.assignedAccounts.map(String).indexOf(id) >= 0;
+  });
+}
+
+// BİLGİLER sekmesindeki "Temsilci" satırının içeriği
+function adRepCellHtml(accId){
+  // Personel listesi henüz çekilmemiş olabilir (kullanıcı Personel sekmesine
+  // hiç girmediyse _staffList boş olur). Bir kez çek, sonra satırı tazele.
+  // _adRepLoadTried bayrağı sonsuz döngüyü önler (liste gerçekten boşsa
+  // adRepRefresh tekrar buraya girer).
+  if((typeof _staffList==='undefined' || !_staffList || !_staffList.length)
+     && !window._adRepLoadTried && typeof fbLoadStaff==='function'){
+    window._adRepLoadTried = true;
+    try{ fbLoadStaff(function(list){ _staffList = list||[]; adRepRefresh(accId); }); }catch(e){}
+  }
+  var assigned = adGetAccStaff(accId);
+  var canEdit  = (typeof hasPerm==='function') ? hasPerm('accounts.edit') : true;
+  var html = '<div id="adRepCell" style="display:flex;flex-direction:column;gap:6px;">';
+
+  if(!assigned.length){
+    html += '<span style="color:#777;font-weight:400;">Atanmamış</span>';
+  } else {
+    html += '<div style="display:flex;flex-wrap:wrap;gap:5px;">';
+    assigned.forEach(function(s){
+      var roleLbl = (typeof ROLES!=='undefined' && ROLES[s.role]) ? ROLES[s.role].label : (s.role||'');
+      html += '<span style="display:inline-flex;align-items:center;gap:6px;background:#1d2b26;'
+        + 'border:1px solid #26a69a55;border-radius:12px;padding:2px 4px 2px 10px;'
+        + 'font-family:var(--mono);font-size:11px;color:#26a69a;font-weight:600;">'
+        + '<span>'+s.name+'</span>'
+        + '<span style="color:#5b7b73;font-weight:400;font-size:10px;">'+roleLbl+'</span>'
+        + (canEdit
+            ? '<button title="Atamayı kaldır" data-acc="'+accId+'" data-staff="'+s.id+'" '
+              + 'onclick="adRepUnassign(this)" style="background:none;border:none;color:#7a9a92;'
+              + 'cursor:pointer;font-size:12px;line-height:1;padding:2px 5px;">✕</button>'
+            : '<span style="width:4px;"></span>')
+        + '</span>';
+    });
+    html += '</div>';
+  }
+
+  if(canEdit){
+    var opts = '<option value="">+ Personel ata…</option>';
+    if(typeof _staffList!=='undefined' && Array.isArray(_staffList)){
+      var already = assigned.map(function(s){return s.id;});
+      _staffList.forEach(function(s){
+        if(already.indexOf(s.id) >= 0) return;          // zaten atanmış
+        if(s.active === false) return;                  // pasif personel gizli
+        var roleLbl = (typeof ROLES!=='undefined' && ROLES[s.role]) ? ROLES[s.role].label : (s.role||'');
+        opts += '<option value="'+s.id+'">'+s.name+' — '+roleLbl+'</option>';
+      });
+    }
+    html += '<select data-acc="'+accId+'" onchange="adRepAssign(this)" '
+      + 'style="background:#141414;border:1px solid #2e2e2e;border-radius:5px;color:#ddd;'
+      + 'font-family:var(--mono);font-size:11px;padding:4px 6px;max-width:230px;font-weight:400;">'
+      + opts + '</select>';
+  }
+
+  html += '</div>';
+  return html;
+}
+
+// Sadece "Temsilci" satırını yeniden çiz (tüm sekmeyi yeniden kurmadan —
+// böylece sayfa yukarı kaymıyor ve diğer alanlar sıfırlanmıyor)
+function adRepRefresh(accId){
+  var cell = document.getElementById('adRepCell');
+  if(!cell || !cell.parentNode) return;
+  cell.parentNode.innerHTML = adRepCellHtml(accId);
+}
+
+function adRepAssign(sel){
+  var staffId = sel.value;
+  if(!staffId) return;
+  var accId = sel.dataset.acc;
+  if(typeof hasPerm==='function' && !hasPerm('accounts.edit')){
+    showAdminToast('Yetersiz Yetki','Temsilci atama yetkiniz yok','error');
+    sel.value=''; return;
+  }
+  var s = _staffList.find(function(x){ return x.id===staffId; });
+  if(!s){ sel.value=''; return; }
+  if(!Array.isArray(s.assignedAccounts)) s.assignedAccounts = [];
+  if(s.assignedAccounts.map(String).indexOf(String(accId)) < 0){
+    s.assignedAccounts.push(accId);
+  }
+  fbSaveStaff(_staffList);
+  adRepSyncCurrentStaff(s);
+  adRepRefresh(accId);
+  if(typeof renderStaffTable==='function'){ try{ renderStaffTable(); }catch(e){} }
+  showAdminToast('Atandı', s.name+' bu hesaba temsilci olarak atandı', 'success');
+}
+
+function adRepUnassign(btn){
+  var accId = btn.dataset.acc, staffId = btn.dataset.staff;
+  if(typeof hasPerm==='function' && !hasPerm('accounts.edit')){
+    showAdminToast('Yetersiz Yetki','Temsilci atama yetkiniz yok','error'); return;
+  }
+  var s = _staffList.find(function(x){ return x.id===staffId; });
+  if(!s) return;
+  if(!confirm(s.name+' adlı personelin bu hesap üzerindeki ataması kaldırılsın mı?')) return;
+  if(Array.isArray(s.assignedAccounts)){
+    var ix = s.assignedAccounts.map(String).indexOf(String(accId));
+    if(ix >= 0) s.assignedAccounts.splice(ix,1);
+  }
+  fbSaveStaff(_staffList);
+  adRepSyncCurrentStaff(s);
+  adRepRefresh(accId);
+  if(typeof renderStaffTable==='function'){ try{ renderStaffTable(); }catch(e){} }
+  showAdminToast('Kaldırıldı', s.name+' bu hesaptan çıkarıldı', 'info');
+}
+
+// Değişen personel şu an giriş yapmış kişiyse kendi görünümü de anında
+// güncellensin (toggleAssign'daki aynı davranış).
+function adRepSyncCurrentStaff(s){
+  if(!(_currentStaff && _currentStaff.id === s.id)) return;
+  _currentStaff.assignedAccounts = (s.assignedAccounts||[]).slice();
+  try{ localStorage.setItem('tx_admin_user', JSON.stringify(_currentStaff)); }catch(e){}
+  if(typeof renderAccTable==='function'){
+    try{ window._accResortPending=true; renderAccTable(); }catch(e){}
+  }
+}
+
 
 // ── KYC BELGE İNCELEME (admin) ──
 var _adKycTypes = { id:'Kimlik Doğrulama', addr:'Adres Doğrulama', selfie:'Selfie Doğrulama' };
@@ -9707,7 +9980,7 @@ function updateReports(){
           +'<th style="padding:8px 12px;text-align:right;color:#b0b0b0;font-family:var(--mono);font-size:9px;">K/Z</th>'
           +'<th style="padding:8px 12px;text-align:right;color:#b0b0b0;font-family:var(--mono);font-size:9px;">TARIH</th>'
           +'</tr></thead><tbody>';
-        allClosed.slice(0,100).forEach(function(h,idx){
+        allClosed.slice(0,TX_HIST_MAX).forEach(function(h,idx){
           var pnl=parseFloat(h.pnl)||0;
           var pc=pnl>=0?'#26a69a':'#ef5350';
           var bg=idx%2===0?'':'background:#0d0d0d;';
@@ -10505,6 +10778,11 @@ function adFpDec(sym) {
   return 5;
 }
 var adFmtMoney=function(n){n=parseFloat(n||0);return(n<0?'-$':'$')+Math.abs(n).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2});};
+// ⚠️ 2026-08-12: Kapanan işlem geçmişi üst sınırı — trader/köprü/functions ile
+// AYNI olmalı (bkz. trader'daki TX_HIST_MAX açıklaması). Admin 100'e kırparken
+// trader 50'ye kırpıyordu; en düşük olan kazandığı için kayıtlar siliniyordu.
+var TX_HIST_MAX = 500;
+
 function adFp(n){ return parseFloat(n||0).toFixed(2); }
 function adFpSym(n, sym){ return parseFloat(n||0).toFixed(adFpDec(sym)); }
 function adFp2(n){ return parseFloat(n||0).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
@@ -10686,11 +10964,17 @@ function _adActiveSubTab() {
 function adRenderOpenTable(){
   var _footEl = document.getElementById('adOpenFooter');
   var tb = document.getElementById('adOpenBody');
-  if(!tb) { if(_footEl) _footEl.style.display='none'; return; }
+  // ⚠️ 2026-08-12: adOpenFooter üç alt sekme (açık/kapalı/finlog) tarafından
+  // PAYLAŞILAN tek elemandır. Burada koşulsuz gizlemek, kullanıcı "Kapalı"
+  // sekmesindeyken snapshot tetiklenince o sekmenin toplamını da siliyordu
+  // (toplam bir saniye görünüp kayboluyordu). Artık yalnız kendi sekremiz
+  // aktifken gizliyoruz — göster dalındaki kontrolün aynısı.
+  var _mine = function(){ return _adActiveSubTab()==='open'; };
+  if(!tb) { if(_footEl && _mine()) _footEl.style.display='none'; return; }
 
   if(!_adPositions.length){
     tb.innerHTML='<tr><td colspan="14" style="text-align:center;color:#b0b0b0;padding:20px;font-size:12px;">Açık pozisyon yok</td></tr>';
-    if(_footEl) _footEl.style.display='none';
+    if(_footEl && _mine()) _footEl.style.display='none';
     return;
   }
 
@@ -10772,11 +11056,12 @@ function adRenderHistoryTable(){
 
   if(!_adHistory.length){
     tb.innerHTML='<tr><td colspan="15" style="text-align:center;color:#b0b0b0;padding:20px;font-size:12px;">Kapatılmış pozisyon yok</td></tr>';
-    if(_footEl) _footEl.style.display='none';
+    // Paylaşılan footer — yalnız "kapalı" sekmesi aktifken gizle (bkz. adRenderOpenTable notu)
+    if(_footEl && _adActiveSubTab()==='closed') _footEl.style.display='none';
     return;
   }
 
-  var sorted = _adHistory.slice(0,200).sort(function(a,b){
+  var sorted = _adHistory.slice(0,TX_HIST_MAX).sort(function(a,b){
     var col=_adHistSort.col, d=_adHistSort.dir, va, vb;
     if(col==='pnl'){ va=a.pnl||0; vb=b.pnl||0; }
     else if(col==='time'){ va=new Date(a.openDate||a.time||0).getTime(); vb=new Date(b.openDate||b.time||0).getTime(); }
@@ -10941,7 +11226,7 @@ function adClosePos(btn){
           return String(h.id)===String(_histEntryAd.id) && h.closeTime===_histEntryAd.closeTime;
         });
         if(!_alreadyClosedAd) serverHist.unshift(_histEntryAd);
-        if(serverHist.length > 100) serverHist = serverHist.slice(0,100);
+        if(serverHist.length > TX_HIST_MAX) serverHist = serverHist.slice(0,TX_HIST_MAX);
         var serverBal = (typeof d.balance === 'number') ? d.balance + pnl : _newBal;
         tx.set(_refACP, { balance: serverBal, positions: serverPos, tradeHistory: serverHist,
           _balanceSource: 'manager', updatedAt: new Date().toISOString() }, { merge: true });
@@ -10992,7 +11277,7 @@ function adCloseAllPositions(){
             closePrice: cur, pnl: pnl, closeTime: nowIso, closeReason:'admin-tumunu-kapat'
           }));
         });
-        if(serverHist.length > 100) serverHist = serverHist.slice(0,100);
+        if(serverHist.length > TX_HIST_MAX) serverHist = serverHist.slice(0,TX_HIST_MAX);
         var serverBal = (typeof d.balance === 'number') ? d.balance + totalPnl : totalPnl;
         tx.set(_refCAP, { positions: [], tradeHistory: serverHist, balance: serverBal, _balanceSource: 'manager', updatedAt: nowIso }, { merge: true });
         return totalPnl;
@@ -11249,7 +11534,7 @@ function adSaveUserTrades(){
   if(!a) return;
   // ⚠️ balance canonical'dan — a.balance GÜVENİLMEZ
   var payload = {
-    tradeHistory: _adHistory.slice(0,100),
+    tradeHistory: _adHistory.slice(0,TX_HIST_MAX),
     balance:      getAccBal(a.id),
     updatedAt:    new Date().toISOString()
   };
